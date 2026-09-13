@@ -1,0 +1,9 @@
+.tarignore
+.gitignore
+.github/
+.git/
+tools/
+docs/
+*.md
+*.png
+*.zip

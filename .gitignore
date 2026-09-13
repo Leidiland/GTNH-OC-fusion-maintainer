@@ -1,0 +1,7 @@
+data/
+*.log
+*.log.old
+*.tar
+__pycache__/
+.idea/
+.vscode/

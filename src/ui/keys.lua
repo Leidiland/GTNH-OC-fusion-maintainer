@@ -1,0 +1,17 @@
+return {
+  escape = 0x01,
+  back = 0x0E,
+  enter = 0x1C,
+  numpadEnter = 0x9C,
+  numpadSubtract = 0x4A,
+  numpadAdd = 0x4E,
+  home = 0xC7,
+  up = 0xC8,
+  pageUp = 0xC9,
+  left = 0xCB,
+  right = 0xCD,
+  ["end"] = 0xCF,
+  down = 0xD0,
+  pageDown = 0xD1,
+  delete = 0xD3
+}
