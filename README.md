@@ -232,11 +232,13 @@ fluids plasma
 ## Recipe table
 
 `recipes.lua` is generated from the GT5-Unofficial sources, which also contain the fusion recipes of
-GT++, BartWorks and GoodGenerator. To regenerate it for another version:
+GT++, BartWorks and GoodGenerator, and from NewHorizonsCoreMod, which adds the Titanium, Boron and
+Oxygen plasma recipes. To regenerate it for another version, use the mod versions from that pack release:
 
 ```shell
 git clone --branch 5.09.54.133 --depth 1 https://github.com/GTNewHorizons/GT5-Unofficial.git
-python tools/generate-recipes.py GT5-Unofficial --source-version 5.09.54.133
+git clone --branch 2.9.61 --depth 1 https://github.com/GTNewHorizons/NewHorizonsCoreMod.git
+python tools/generate-recipes.py GT5-Unofficial NewHorizonsCoreMod
 ```
 
 The generator exits with an error listing every recipe whose fluids it cannot resolve.
