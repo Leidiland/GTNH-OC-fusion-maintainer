@@ -189,7 +189,7 @@ created on first start.
 |---|---|---|
 | `pollInterval` | `5` | Seconds between ME network checks |
 | `stallTimeout` | `60` | Seconds a switched-on reactor may stay inactive before a warning, `0` disables |
-| `network.address` | `nil` | ME Interface or ME Controller address, the first one found is used when empty |
+| `network.address` | `nil` | ME Dual Interface or ME Interface address, the first one found is used when empty |
 | `reactors.discover` | `true` | Detect fusion controllers automatically |
 | `reactors.addresses` | `{}` | Controller addresses used in addition to detected ones |
 | `defaults.lowThreshold` | `100000` | Switch-on threshold in mB for new reactors |

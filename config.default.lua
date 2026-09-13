@@ -3,7 +3,7 @@ return {
   stallTimeout = 60, -- Seconds a switched-on reactor may stay inactive before a warning, 0 disables
 
   network = {
-    address = nil, -- ME interface or ME controller address, nil uses the first one found
+    address = nil, -- ME Dual Interface or ME Interface address, nil uses the first one found
   },
 
   reactors = {

@@ -32,8 +32,8 @@ MeNetwork.__index = MeNetwork
 
 ---@type table<string, string>
 MeNetwork.messages = {
-  missing = "ME network unavailable: no ME Interface or ME Controller connected",
-  unsupported = "ME network unavailable: connected interface cannot read the network, use a block ME Interface or an ME Controller",
+  missing = "ME network unavailable: no ME Dual Interface or ME Interface connected",
+  unsupported = "ME network unavailable: connected interface cannot read the network, use a block ME Dual Interface or ME Interface",
   failed = "ME network unavailable: reading the network failed"
 }
 
