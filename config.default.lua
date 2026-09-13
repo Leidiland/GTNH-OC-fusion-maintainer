@@ -1,5 +1,6 @@
 return {
   pollInterval = 5, -- Seconds between ME network checks
+  stallTimeout = 60, -- Seconds a switched-on reactor may stay inactive before a warning, 0 disables
 
   network = {
     address = nil, -- ME interface or ME controller address, nil uses the first one found
@@ -19,7 +20,7 @@ return {
   steps = {1000, 10000, 100000, 1000000, 10000000}, -- Threshold adjustment steps in mB
 
   log = {
-    file = "fusion-maintainer.log",
+    file = "fusion-maintainer.log", -- Log file in the program folder
     maxFileSize = 262144, -- Bytes before the log file is rotated
     timeZone = 0, -- Hours offset from UTC for timestamps
     discordWebhookUrl = "", -- Discord webhook for notifications, empty to disable

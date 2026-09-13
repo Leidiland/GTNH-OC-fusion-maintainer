@@ -1,34 +1,40 @@
-local component = require("component")
+local filesystem = require("filesystem")
 local shell = require("shell")
+
+local root = filesystem.canonical(filesystem.path(shell.resolve(os.getenv("_") or "fluids.lua")))
+local previousPath = package.path
+
+package.path = root.."/?.lua;"..previousPath
+
+local Config = require("src.config")
+local MeNetwork = require("src.me-network")
+
+package.path = previousPath
 
 local args = shell.parse(...)
 local filter = args[1] and string.lower(args[1]) or nil
+local loaded, config = pcall(Config.load, root)
 
-local proxy = nil
-
-for _, componentType in ipairs({"me_interface", "me_controller"}) do
-  if component.isAvailable(componentType) then
-    proxy = component.getPrimary(componentType)
-    break
-  end
+if not loaded then
+  io.stderr:write(tostring(config).."\n")
+  return
 end
 
-if proxy == nil then
-  io.stderr:write("ME interface or ME controller not found\n")
+local network = MeNetwork.new(config.network.address)
+local snapshot = network:read()
+
+if snapshot == nil then
+  io.stderr:write(MeNetwork.messages[network.status].."\n")
   return
 end
 
 local fluids = {}
 
-for _, stack in pairs(proxy.getFluidsInNetwork() or {}) do
-  if type(stack) == "table" and stack.name ~= nil then
-    local label = stack.label or ""
-
-    if filter == nil
-      or string.find(string.lower(stack.name), filter, 1, true)
-      or string.find(string.lower(label), filter, 1, true) then
-      table.insert(fluids, {name = stack.name, label = label, amount = stack.amount})
-    end
+for _, stack in pairs(snapshot.byName) do
+  if filter == nil
+    or string.find(string.lower(stack.name), filter, 1, true)
+    or string.find(string.lower(stack.label), filter, 1, true) then
+    table.insert(fluids, stack)
   end
 end
 

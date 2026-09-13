@@ -4,6 +4,8 @@ return {
   surfaceRaised = 0x1F2630,
   border = 0x333D4A,
   track = 0x262E38,
+  markerLow = 0xFF3347,
+  markerHigh = 0x2FD866,
   selection = 0x21384A,
   text = 0xD7DDE5,
   muted = 0x7D8896,

@@ -40,6 +40,7 @@ function App.new(root, config, recipes, version)
     dirty = true,
     nextPoll = 0,
     discoverAt = nil,
+    discordLog = nil,
     dialog = nil
   }, App)
 end
@@ -55,6 +56,10 @@ function App:init()
 
   local config = self.config
 
+  if #config.steps == 0 then
+    error("config.lua: steps needs at least one value", 0)
+  end
+
   self.clock = Clock.new(config.log.timeZone)
   self.memoryLog = MemoryLog.new(64)
   self.logger = Logger.new(self.clock)
@@ -62,7 +67,8 @@ function App:init()
   self.logger:addHandler(FileLog.new(self.root.."/"..config.log.file, config.log.maxFileSize), "info")
 
   if config.log.discordWebhookUrl ~= "" then
-    self.logger:addHandler(DiscordLog.new(config.log.discordWebhookUrl, "Fusion Maintainer"), config.log.discordLevel)
+    self.discordLog = DiscordLog.new(config.log.discordWebhookUrl, "Fusion Maintainer")
+    self.logger:addHandler(self.discordLog, config.log.discordLevel)
   end
 
   self.store = Store.new(self.root.."/data/reactors.dat")
@@ -80,6 +86,7 @@ function App:init()
   self.controller:discover()
 end
 
+---Run the main loop until the program is quit
 function App:run()
   self:init()
   self.running = true
@@ -105,6 +112,10 @@ function App:run()
       self:render()
       self.dirty = false
       renderedSecond = math.floor(now)
+    end
+
+    if self.discordLog then
+      self.discordLog:update()
     end
 
     local wait = math.min(self.nextPoll, math.floor(computer.uptime()) + 1) - computer.uptime()
@@ -220,6 +231,10 @@ function App:shutdown()
 
   if self.logger then
     self.logger:info("Stopped")
+  end
+
+  if self.discordLog then
+    self.discordLog:flush(3)
   end
 end
 

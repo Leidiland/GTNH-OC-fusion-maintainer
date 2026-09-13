@@ -56,6 +56,7 @@ function InputDialog:submit()
   self.close()
 end
 
+---Handle a key press
 ---@param char integer
 ---@param code integer
 function InputDialog:key(char, code)
@@ -85,13 +86,14 @@ function InputDialog:key(char, code)
   end
 end
 
+---Draw the dialog
 ---@param canvas Canvas
 function InputDialog:render(canvas)
   local width, height = 64, 9
   local x, y = drawFrame(canvas, width, height, self.options.title)
 
   canvas:text(x + 2, y + 2, format.fit(self.options.prompt, width - 4), "muted", "surfaceRaised")
-  canvas:fill(x + 2, y + 4, width - 4, 1, "background")
+  canvas:pill(x + 2, y + 4, width - 4, "background", "surfaceRaised")
 
   if self.pristine and self.text ~= "" then
     canvas:text(x + 3, y + 4, format.fit(self.text, math.min(unicode.len(self.text), width - 6)), "text", "selection")
@@ -106,8 +108,8 @@ function InputDialog:render(canvas)
   local cancelLabel, submitLabel = "Cancel  Esc", "OK  Enter"
   local buttonX = x + width - 2 - buttonWidth(cancelLabel) - 1 - buttonWidth(submitLabel)
 
-  buttonX = canvas:button(buttonX, y + 7, cancelLabel, function() self.close() end) + 1
-  canvas:button(buttonX, y + 7, submitLabel, function() self:submit() end, "active")
+  buttonX = canvas:button(buttonX, y + 7, cancelLabel, function() self.close() end, "normal", "surfaceRaised") + 1
+  canvas:button(buttonX, y + 7, submitLabel, function() self:submit() end, "active", "surfaceRaised")
 end
 
 ---@class RecipeDialog
@@ -172,6 +174,7 @@ function RecipeDialog:move(delta)
   self.index = math.max(1, math.min(#self.entries, self.index + delta))
 end
 
+---Handle a key press
 ---@param char integer
 ---@param code integer
 function RecipeDialog:key(char, code)
@@ -200,11 +203,13 @@ function RecipeDialog:key(char, code)
   end
 end
 
+---Move the selection with the mouse wheel
 ---@param direction integer
 function RecipeDialog:scroll(direction)
   self:move(-direction)
 end
 
+---Draw the dialog
 ---@param canvas Canvas
 function RecipeDialog:render(canvas)
   local width, height = 128, 40
@@ -212,7 +217,7 @@ function RecipeDialog:render(canvas)
   local rows = height - 9
 
   canvas:text(x + 2, y + 2, "Search", "muted", "surfaceRaised")
-  canvas:fill(x + 10, y + 2, 40, 1, "background")
+  canvas:pill(x + 10, y + 2, 40, "background", "surfaceRaised")
   canvas:text(x + 11, y + 2, format.fit(self.query.."▌", 38), "text", "background")
   canvas:text(x + 52, y + 2, (#self.entries - 1).." recipes", "muted", "surfaceRaised")
 
@@ -261,7 +266,7 @@ function RecipeDialog:render(canvas)
       cells = {{"No recipe", "muted"}, {"Automatic control off", "muted"}}
     end
 
-    canvas:fill(x + 1, rowY, width - 2, 1, background)
+    canvas:pill(x + 1, rowY, width - 2, background, "surfaceRaised")
     columnX = x + 2
 
     for columnIndex, column in ipairs(recipeColumns) do
@@ -287,7 +292,8 @@ function RecipeDialog:render(canvas)
     "muted", "surfaceRaised")
 
   local cancelLabel = "Cancel  Esc"
-  canvas:button(x + width - 2 - buttonWidth(cancelLabel), y + height - 2, cancelLabel, function() self.close() end)
+  canvas:button(x + width - 2 - buttonWidth(cancelLabel), y + height - 2, cancelLabel, function() self.close() end,
+    "normal", "surfaceRaised")
 end
 
 return dialogs

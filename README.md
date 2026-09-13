@@ -4,11 +4,16 @@ OpenComputers program for GT New Horizons that keeps fusion reactor products sto
 Each reactor is switched on when its product drops below a lower threshold and switched off when it
 reaches an upper threshold. Recipes, thresholds and control mode are set on screen while the program runs.
 
+<p align="center">
+  <img src="docs/dashboard.png" alt="Fusion Maintainer dashboard">
+</p>
+
 ## Content
 
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Update](#update)
 - [Setup](#setup)
 - [Usage](#usage)
 - [Control](#control)
@@ -23,8 +28,9 @@ reaches an upper threshold. Recipes, thresholds and control mode are set on scre
 - Built-in table of all fusion recipes, searchable on screen
 - Switch-on and switch-off thresholds per reactor, adjustable with keyboard or mouse
 - Input check against the ME network and startup EU check before switching on
-- Auto and Manual mode per reactor
-- Settings are saved and restored on restart
+- Auto and Manual mode and an on/off button per reactor
+- Sortable reactor table with stock level bars
+- Settings are saved and kept when updating
 - Event log on screen, in a file and optionally in Discord
 
 <a id="requirements"></a>
@@ -63,14 +69,26 @@ Start the program:
 
 To start it on boot, add the same line to `/home/.shrc`.
 
+<a id="update"></a>
+
+## Update
+
+```shell
+/home/fusion-maintainer/update
+```
+
+`config.lua` and saved settings are kept. Add `--reset-config` to restore the default config or
+`--config=<path>` to install another file. The replaced config is saved as `config.lua.bak`.
+
 <a id="setup"></a>
 
 ## Setup
 
 - Connect every fusion controller to the computer with an Adapter placed against the controller,
   or with an MFU bound to the controller inside an Adapter.
-- Connect an ME Interface, ME Dual Interface or ME Controller of the network that stores
-  the reactor products and inputs with an Adapter.
+- Connect a block ME Interface or an ME Controller of the network that stores
+  the reactor products and inputs with an Adapter. Cable-mounted ME Interfaces, ME Fluid Interfaces
+  and ME Dual Interfaces cannot read the network.
 - Deliver the reactor products into that ME network, for example with an Output Hatch (ME).
 - Supply the reactor inputs from outside the program. Inputs are checked, never requested.
 
@@ -84,12 +102,16 @@ The screen is split into four areas:
 
 | Area | Content |
 |---|---|
-| Reactors | All detected reactors with product, stock level bar, thresholds, stored EU and state |
+| Reactors | All detected reactors with on/off button, product, stock level bar, thresholds, stored EU and state |
 | Selected | Recipe, fluid amounts in the ME network, thresholds, step size, mode and energy of the selected reactor |
 | Events | Switching actions, warnings and setting changes |
 | Footer | Keyboard shortcuts |
 
-The stock level bar shows the current stock with markers at both thresholds.
+The stock level bar shows the stock as a percentage of the switch-off threshold, up to 100%, with a red marker
+at the switch-on threshold and a green marker at the switch-off threshold.
+
+Usage and time in the Selected area include the overclocks the reactor applies to its recipe. The overclock
+multiplier is shown next to both values, for example `30.7k EU/t ×2` and `1.60 s ÷2`.
 
 Newly detected reactors start in Manual mode without a recipe. To put a reactor under control:
 
@@ -110,11 +132,12 @@ Newly detected reactors start in Manual mode without a recipe. To put a reactor 
 | <kbd>R</kbd> | Choose recipe |
 | <kbd>N</kbd> | Rename reactor |
 | <kbd>M</kbd> | Toggle Auto and Manual |
+| <kbd>O</kbd> | Switch the reactor on or off, sets Manual mode |
 | <kbd>PgUp</kbd> <kbd>PgDn</kbd> | Scroll events |
 | <kbd>Del</kbd> | Clear events |
 | <kbd>Q</kbd> | Quit |
 
-Rows and buttons can be clicked. The mouse wheel scrolls the reactor list and the events.
+Rows and buttons can be clicked. Click a column header to sort the table. The mouse wheel scrolls the reactor list and the events.
 In the recipe dialog, type to search by fluid name and select a recipe with <kbd>Enter</kbd> or by clicking it twice.
 
 #### States
@@ -123,6 +146,7 @@ In the recipe dialog, type to search by fluid name and select a recipe with <kbd
 |---|---|
 | Running | Switched on and processing |
 | Starting | Switched on, not processing yet |
+| Stalled | Switched on but not processing for `stallTimeout` seconds |
 | Idle | Stock is at or above the switch-on threshold |
 | Charging | Stored EU is below the recipe startup EU |
 | Missing inputs | An input in the ME network is below the required amount |
@@ -159,11 +183,13 @@ Fluids are matched by internal name. When a name is not present in the ME networ
 
 ## Configuration
 
-Settings changed on screen are stored in `data/reactors.dat`. General configuration is in `config.lua`.
+Settings changed on screen are stored in `data/reactors.dat`. General configuration is in `config.lua`,
+created on first start.
 
 | Field | Default | Description |
 |---|---|---|
 | `pollInterval` | `5` | Seconds between ME network checks |
+| `stallTimeout` | `60` | Seconds a switched-on reactor may stay inactive before a warning, `0` disables |
 | `network.address` | `nil` | ME Interface or ME Controller address, the first one found is used when empty |
 | `reactors.discover` | `true` | Detect fusion controllers automatically |
 | `reactors.addresses` | `{}` | Controller addresses used in addition to detected ones |
@@ -171,7 +197,8 @@ Settings changed on screen are stored in `data/reactors.dat`. General configurat
 | `defaults.highThreshold` | `1000000` | Switch-off threshold in mB for new reactors |
 | `defaults.inputBatches` | `16` | Recipe runs of each input required before switching on |
 | `steps` | `1k` to `10M` | Step sizes for threshold adjustment |
-| `log.file` | `fusion-maintainer.log` | Log file, rotated at `log.maxFileSize` bytes |
+| `log.file` | `fusion-maintainer.log` | Log file in the program folder |
+| `log.maxFileSize` | `262144` | Bytes before the log file is rotated to `.old` |
 | `log.timeZone` | `0` | Hours offset from UTC for timestamps |
 | `log.discordWebhookUrl` | `""` | Discord webhook for notifications |
 | `log.discordLevel` | `warning` | Minimum level sent to Discord |

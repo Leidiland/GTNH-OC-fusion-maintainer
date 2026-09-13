@@ -2,6 +2,7 @@ local unicode = require("unicode")
 
 local buttonStyles = {
   normal = {"text", "border"},
+  raised = {"text", "surfaceRaised"},
   active = {"background", "accent"}
 }
 
@@ -28,6 +29,7 @@ function Canvas.new(gpu, theme, width, height)
   }, Canvas)
 end
 
+---Apply the theme palette and resolution and allocate the frame buffer
 function Canvas:open()
   local gpu = self.gpu
   local width, height = gpu.getResolution()
@@ -62,6 +64,7 @@ function Canvas:open()
   end
 end
 
+---Restore the previous palette and resolution
 function Canvas:close()
   local gpu = self.gpu
 
@@ -87,6 +90,7 @@ function Canvas:close()
   self.saved = nil
 end
 
+---Start a frame and clear the touch regions
 function Canvas:begin()
   self.regions = {}
   self.foreground = nil
@@ -97,6 +101,7 @@ function Canvas:begin()
   end
 end
 
+---Copy the finished frame to the screen
 function Canvas:finish()
   if self.buffer then
     self.gpu.setActiveBuffer(0)
@@ -147,22 +152,89 @@ function Canvas:text(x, y, text, foreground, background)
   self.gpu.set(x, y, text)
 end
 
----Draw a clickable button and return the column after it
+---Fill a single row with rounded ends
+---@param x integer
+---@param y integer
+---@param width integer
+---@param color string
+---@param outside string
+function Canvas:pill(x, y, width, color, outside)
+  self:text(x, y, "◖", color, outside)
+  self:fill(x + 1, y, width - 2, 1, color)
+  self:text(x + width - 1, y, "◗", color, outside)
+end
+
+---Draw a clickable rounded button and return the column after it
 ---@param x integer
 ---@param y integer
 ---@param label string
 ---@param action function
----@param style? "normal"|"active"
+---@param style? "normal"|"raised"|"active"
+---@param outside? string
 ---@return integer
-function Canvas:button(x, y, label, action, style)
+function Canvas:button(x, y, label, action, style, outside)
   local colors = buttonStyles[style or "normal"]
-  local text = " "..label.." "
-  local width = unicode.len(text)
+  local width = unicode.len(label) + 2
 
-  self:text(x, y, text, colors[1], colors[2])
+  self:pill(x, y, width, colors[2], outside or "background")
+  self:text(x + 1, y, label, colors[1], colors[2])
   self:region(x, y, width, 1, action)
 
   return x + width
+end
+
+---Draw a rounded button with a highlighted shortcut key and return the column after it
+---@param x integer
+---@param y integer
+---@param key string
+---@param label string
+---@param action function
+---@param outside? string
+---@return integer
+function Canvas:keyButton(x, y, key, label, action, outside)
+  local keyWidth = unicode.len(key)
+  local width = keyWidth + unicode.len(label) + 6
+
+  self:pill(x, y, width, "surfaceRaised", outside or "background")
+  self:text(x + 2, y, key, "accent", "surfaceRaised")
+  self:text(x + 4 + keyWidth, y, label, "text", "surfaceRaised")
+  self:region(x, y, width, 1, action)
+
+  return x + width
+end
+
+---Draw a rounded bar of options with the active one highlighted and return the column after it
+---@param x integer
+---@param y integer
+---@param options {label: string, action: function}[]
+---@param active integer
+---@param outside? string
+---@return integer
+function Canvas:segmented(x, y, options, active, outside)
+  outside = outside or "background"
+
+  self:text(x, y, "◖", active == 1 and "accent" or "surfaceRaised", outside)
+
+  local cellX = x + 1
+
+  for index, option in ipairs(options) do
+    if index > 1 then
+      self:text(cellX, y, "│", "border", "surfaceRaised")
+      cellX = cellX + 1
+    end
+
+    local text = " "..option.label.." "
+    local width = unicode.len(text)
+    local selected = index == active
+
+    self:text(cellX, y, text, selected and "background" or "muted", selected and "accent" or "surfaceRaised")
+    self:region(cellX, y, width, 1, option.action)
+    cellX = cellX + width
+  end
+
+  self:text(cellX, y, "◗", active == #options and "accent" or "surfaceRaised", outside)
+
+  return cellX + 1
 end
 
 ---@param x integer

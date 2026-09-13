@@ -1,5 +1,6 @@
 local component = require("component")
 
+local MeNetwork = require("src.me-network")
 local Reactor = require("src.reactor")
 
 ---@class Controller
@@ -33,14 +34,14 @@ function Controller:discover()
 
   local function consider(address, required)
     local ok, machineName = pcall(component.invoke, address, "getName")
-    local kind = ok and Reactor.detectKind(machineName) or nil
+    local machine = ok and Reactor.detectMachine(machineName) or nil
 
-    if kind == nil and required and ok then
-      kind = "Fusion"
+    if machine == nil and required and ok then
+      machine = {kind = "Fusion", compact = false}
     end
 
-    if kind then
-      found[address] = kind
+    if machine then
+      found[address] = machine
     end
   end
 
@@ -68,13 +69,13 @@ function Controller:discover()
 
   local reactors = {}
 
-  for address, kind in pairs(found) do
+  for address, machine in pairs(found) do
     local reactor = existing[address]
 
     if reactor == nil then
       local settings = self.store:reactor(address, self.config.defaults)
 
-      reactor = Reactor.new(address, component.proxy(address), kind, settings, self.logger)
+      reactor = Reactor.new(address, component.proxy(address), machine, settings, self.logger)
       reactor.recipe = self.recipes:get(settings.recipe)
 
       if settings.recipe and reactor.recipe == nil then
@@ -108,22 +109,22 @@ end
 
 ---Read the network and update all reactors
 function Controller:poll()
-  local wasOnline = self.network.online
+  local previousStatus = self.network.status
 
   self.snapshot = self.network:read()
 
-  if not self.polled or self.network.online ~= wasOnline then
+  if not self.polled or self.network.status ~= previousStatus then
     if self.network.online then
       self.logger:info("ME network connected")
     else
-      self.logger:warning("ME network unavailable")
+      self.logger:warning(MeNetwork.messages[self.network.status])
     end
   end
 
   local running = 0
 
   for _, reactor in ipairs(self.reactors) do
-    reactor:update(self.snapshot, self.config.defaults.inputBatches)
+    reactor:update(self.snapshot, self.config.defaults.inputBatches, self.config.stallTimeout)
 
     if reactor.workAllowed then
       running = running + 1

@@ -1,4 +1,7 @@
+local computer = require("computer")
+
 local format = require("src.format")
+local Overclock = require("src.overclock")
 
 ---@class ReactorState
 ---@field label string
@@ -18,6 +21,7 @@ Reactor.__index = Reactor
 Reactor.states = {
   running = {label = "Running", tone = "good"},
   starting = {label = "Starting", tone = "warn"},
+  stalled = {label = "Stalled", tone = "bad"},
   idle = {label = "Idle", tone = "accent"},
   charging = {label = "Charging", tone = "warn"},
   noInputs = {label = "Missing inputs", tone = "bad"},
@@ -30,21 +34,27 @@ Reactor.states = {
 
 local numerals = {"I", "II", "III", "IV", "V"}
 
----Detect a fusion controller type from its machine name
+---@class ReactorMachine
+---@field kind string
+---@field tier integer|nil
+---@field compact boolean
+
+---Detect a fusion controller type and MK tier from its machine name
 ---@param machineName string
----@return string|nil
-function Reactor.detectKind(machineName)
+---@return ReactorMachine|nil
+function Reactor.detectMachine(machineName)
   local name = string.lower(machineName or "")
   local tier = tonumber(string.match(name, "fusioncomputer%.tier%.(%d+)"))
 
   if tier then
-    return "Fusion MK "..(numerals[tier - 5] or tostring(tier - 5))
+    tier = tier - 5
+    return {kind = "Fusion MK "..(numerals[tier] or tostring(tier)), tier = tier, compact = false}
   end
 
   local compactTier = tonumber(string.match(name, "largefusioncomputer(%d+)"))
 
   if compactTier then
-    return "Compact MK "..(numerals[compactTier] or tostring(compactTier))
+    return {kind = "Compact MK "..(numerals[compactTier] or tostring(compactTier)), tier = compactTier, compact = true}
   end
 
   return nil
@@ -53,15 +63,17 @@ end
 ---Create a reactor
 ---@param address string
 ---@param proxy table
----@param kind string
+---@param machine ReactorMachine
 ---@param settings ReactorSettings
 ---@param logger Logger
 ---@return Reactor
-function Reactor.new(address, proxy, kind, settings, logger)
+function Reactor.new(address, proxy, machine, settings, logger)
   return setmetatable({
     address = address,
     proxy = proxy,
-    kind = kind,
+    kind = machine.kind,
+    tier = machine.tier,
+    compact = machine.compact,
     settings = settings,
     logger = logger,
     recipe = nil,
@@ -72,13 +84,30 @@ function Reactor.new(address, proxy, kind, settings, logger)
     storedEu = 0,
     capacity = 0,
     workAllowed = false,
-    active = false
+    active = false,
+    inactiveSince = nil
   }, Reactor)
 end
 
 ---@return string
 function Reactor:displayName()
   return self.settings.name or (self.kind.." "..string.sub(self.address, 1, 4))
+end
+
+---Recipe EU/t and duration after overclocking in this reactor, base values when the tier is unknown
+---@return OverclockResult|nil
+function Reactor:overclockedRecipe()
+  local recipe = self.recipe
+
+  if recipe == nil then
+    return nil
+  end
+
+  if self.tier == nil or self.tier < 1 or self.tier > 5 then
+    return {overclocks = 0, multiplier = 1, eut = recipe.eut, duration = recipe.duration}
+  end
+
+  return Overclock.apply(recipe, self.tier, self.compact)
 end
 
 ---@param name string|nil
@@ -100,11 +129,13 @@ function Reactor:setMode(mode)
   self.settings.mode = mode
 end
 
+---Set the switch-on threshold, kept below the switch-off threshold
 ---@param value number
 function Reactor:setLow(value)
   self.settings.low = math.max(0, math.min(math.floor(value), self.settings.high - 1))
 end
 
+---Set the switch-off threshold, kept above the switch-on threshold
 ---@param value number
 function Reactor:setHigh(value)
   self.settings.high = math.max(math.floor(value), self.settings.low + 1)
@@ -113,9 +144,17 @@ end
 ---Read machine state and apply control
 ---@param snapshot FluidSnapshot|nil
 ---@param inputBatches integer
-function Reactor:update(snapshot, inputBatches)
+---@param stallTimeout? integer
+function Reactor:update(snapshot, inputBatches, stallTimeout)
   if not self:readMachine() then
+    self.inactiveSince = nil
     return self:setState("offline", "warning", "Controller not reachable")
+  end
+
+  if self.workAllowed and not self.active then
+    self.inactiveSince = self.inactiveSince or computer.uptime()
+  else
+    self.inactiveSince = nil
   end
 
   local recipe = self.recipe
@@ -148,7 +187,15 @@ function Reactor:update(snapshot, inputBatches)
       return self:setState("noInputs", "warning", "Missing "..table.concat(missing, ", ")..", switched off")
     end
 
-    return self:setState(self.active and "running" or "starting")
+    if self.active then
+      return self:setState("running")
+    end
+
+    if stallTimeout and stallTimeout > 0 and computer.uptime() - self.inactiveSince >= stallTimeout then
+      return self:setState("stalled", "warning", "Switched on but not processing for "..stallTimeout.." s")
+    end
+
+    return self:setState("starting")
   end
 
   if self.stock >= settings.low then
@@ -218,12 +265,16 @@ function Reactor:missingInputs()
   return missing
 end
 
+---Enable or disable the machine, returns false when the controller cannot be reached
 ---@param allowed boolean
----@private
+---@return boolean
 function Reactor:setWorkAllowed(allowed)
   if pcall(self.proxy.setWorkAllowed, allowed) then
     self.workAllowed = allowed
+    return true
   end
+
+  return false
 end
 
 ---@param key string

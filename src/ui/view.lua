@@ -22,16 +22,29 @@ local layout = {
 }
 
 local columns = {
-  {id = "name", title = "REACTOR", width = 20},
-  {id = "kind", title = "TYPE", width = 16},
-  {id = "output", title = "OUTPUT", width = 26},
-  {id = "level", title = "STOCK LEVEL", width = 28},
-  {id = "stock", title = "STOCK", width = 8, align = "right"},
-  {id = "low", title = "ON BELOW", width = 8, align = "right"},
-  {id = "high", title = "OFF AT", width = 8, align = "right"},
-  {id = "energy", title = "EU STORED", width = 9, align = "right"},
-  {id = "state", title = "STATE", width = 16}
+  {id = "power", title = "", width = 4},
+  {id = "name", title = "REACTOR", width = 20, sort = function(reactor) return string.lower(reactor:displayName()) end},
+  {id = "kind", title = "TYPE", width = 14, align = "center", sort = function(reactor) return reactor.kind end},
+  {id = "output", title = "OUTPUT", width = 26, align = "center", sort = function(reactor)
+    return reactor.recipe and string.lower(reactor.outputLabel or reactor.recipe.output.label) or ""
+  end},
+  {id = "level", title = "STOCK LEVEL", width = 24, align = "center", sort = function(reactor)
+    return reactor.stock and reactor.stock / math.max(reactor.settings.high, 1) or -1
+  end},
+  {id = "stock", title = "STOCK", width = 8, align = "center", sort = function(reactor) return reactor.stock or -1 end},
+  {id = "low", title = "ON BELOW", width = 8, align = "center", sort = function(reactor) return reactor.settings.low end},
+  {id = "high", title = "OFF AT", width = 8, align = "center", sort = function(reactor) return reactor.settings.high end},
+  {id = "energy", title = "EU STORED", width = 9, align = "center", sort = function(reactor) return reactor.storedEu end},
+  {id = "state", title = "STATE", width = 16, headerAlign = "center", sort = function(reactor)
+    return (Reactor.states[reactor.state] or Reactor.states.noRecipe).label
+  end}
 }
+
+local columnsById = {}
+
+for _, column in ipairs(columns) do
+  columnsById[column.id] = column
+end
 
 local columnGap = 2
 
@@ -51,6 +64,7 @@ local hints = {
   {"R", "Recipe"},
   {"N", "Rename"},
   {"M", "Mode"},
+  {"O", "On/Off"},
   {"PgUp PgDn", "Events"},
   {"Del", "Clear events"},
   {"Q", "Quit"}
@@ -75,23 +89,55 @@ local function drawSectionTitle(canvas, y, title, note)
   end
 end
 
+---Draw a thin marker on a bar
 ---@param canvas Canvas
+---@param x integer
+---@param y integer
+---@param filledUntil integer
+---@param tone string
 local function drawMarker(canvas, x, y, filledUntil, tone)
   canvas:text(x, y, "┃", "text", x < filledUntil and tone or "track")
 end
 
+---Draw the stock bar with threshold markers and the stock as a percentage of the switch-off threshold
 ---@param canvas Canvas
+---@param x integer
+---@param y integer
+---@param width integer
+---@param stock integer
+---@param low integer
+---@param high integer
+---@param tone string
 local function drawStockLevel(canvas, x, y, width, stock, low, high, tone)
   local scale = math.max(high * 1.25, stock, 1)
   local filled = math.min(width, math.floor(stock / scale * width + 0.5))
+  local lowX = x + math.min(width - 1, math.floor(low / scale * width))
+  local highX = x + math.min(width - 1, math.floor(high / scale * width))
+  local label = math.min(100, math.floor(stock / math.max(high, 1) * 100 + 0.5)).."%"
+  local labelX = x + math.floor((width - #label) / 2)
+  local markers = {[lowX] = "markerLow", [highX] = "markerHigh"}
 
   canvas:fill(x, y, filled, 1, tone)
   canvas:fill(x + filled, y, width - filled, 1, "track")
-  drawMarker(canvas, x + math.min(width - 1, math.floor(low / scale * width)), y, x + filled, tone)
-  drawMarker(canvas, x + math.min(width - 1, math.floor(high / scale * width)), y, x + filled, tone)
+  canvas:fill(lowX, y, 1, 1, "markerLow")
+  canvas:fill(highX, y, 1, 1, "markerHigh")
+
+  for index = 1, #label do
+    local cellX = labelX + index - 1
+    local background = markers[cellX] or (cellX < x + filled and tone) or "track"
+
+    canvas:text(cellX, y, string.sub(label, index, index), background == "track" and "text" or "background", background)
+  end
 end
 
+---Draw the stored EU bar with a marker at the recipe startup EU
 ---@param canvas Canvas
+---@param x integer
+---@param y integer
+---@param width integer
+---@param stored integer
+---@param capacity integer
+---@param startup integer
 local function drawEnergyLevel(canvas, x, y, width, stored, capacity, startup)
   local scale = math.max(capacity, 1)
   local filled = math.min(width, math.floor(stored / scale * width + 0.5))
@@ -103,6 +149,19 @@ local function drawEnergyLevel(canvas, x, y, width, stored, capacity, startup)
   if startup > 0 and startup <= capacity then
     drawMarker(canvas, x + math.min(width - 1, math.floor(startup / scale * width)), y, x + filled, tone)
   end
+end
+
+---Draw the on/off button of a reactor
+---@param canvas Canvas
+---@param x integer
+---@param y integer
+---@param on boolean
+---@param outside string
+local function drawPowerButton(canvas, x, y, on, outside)
+  local color = on and "track" or "border"
+
+  canvas:pill(x, y, 4, color, outside)
+  canvas:text(x + 1, y, "⏻", on and "markerHigh" or "muted", color)
 end
 
 ---@class View
@@ -117,15 +176,62 @@ function View.new(app)
     app = app,
     selected = nil,
     field = "low",
-    stepIndex = 2,
+    sortColumn = "name",
+    sortDescending = false,
+    stepIndex = math.min(2, #app.config.steps),
     reactorsOffset = 0,
     eventsOffset = 0
   }, View)
 end
 
+---Reactors in the current sort order, sorted once per frame while rendering
+---@return Reactor[]
+function View:reactors()
+  if self.sorted then
+    return self.sorted
+  end
+
+  local column = columnsById[self.sortColumn]
+  local reactors = {}
+  local keys = {}
+
+  for index, reactor in ipairs(self.app.controller.reactors) do
+    reactors[index] = reactor
+    keys[reactor] = column.sort(reactor)
+  end
+
+  table.sort(reactors, function(a, b)
+    local keyA, keyB = keys[a], keys[b]
+
+    if keyA ~= keyB then
+      if self.sortDescending then
+        return keyA > keyB
+      end
+
+      return keyA < keyB
+    end
+
+    return a.address < b.address
+  end)
+
+  return reactors
+end
+
+---Sort by a column, reversing the order when it is already sorted by it
+---@param id string
+function View:sortBy(id)
+  if self.sortColumn == id then
+    self.sortDescending = not self.sortDescending
+  else
+    self.sortColumn = id
+    self.sortDescending = false
+  end
+end
+
+---Index and reactor of the selection, selecting the first reactor when nothing is selected
 ---@return integer|nil, Reactor|nil
 function View:selection()
-  local reactors = self.app.controller.reactors
+  local reactors = self:reactors()
 
   for index, reactor in ipairs(reactors) do
     if reactor.address == self.selected then
@@ -141,9 +247,10 @@ function View:selection()
   return nil, nil
 end
 
+---Move the selection by a number of rows
 ---@param delta integer
 function View:moveSelection(delta)
-  local reactors = self.app.controller.reactors
+  local reactors = self:reactors()
   local index = self:selection()
 
   if index then
@@ -151,6 +258,7 @@ function View:moveSelection(delta)
   end
 end
 
+---Change the active threshold by the current step
 ---@param reactor Reactor
 ---@param direction integer
 function View:adjust(reactor, direction)
@@ -165,6 +273,7 @@ function View:adjust(reactor, direction)
   self.app:settingsChanged()
 end
 
+---Set the control mode and log the change
 ---@param reactor Reactor
 ---@param mode "auto"|"manual"
 function View:setMode(reactor, mode)
@@ -177,6 +286,26 @@ function View:setMode(reactor, mode)
   self.app:settingsChanged()
 end
 
+---Switch a reactor on or off by hand, which sets it to manual mode
+---@param reactor Reactor
+---@param allowed boolean
+function View:setWorkAllowed(reactor, allowed)
+  self:setMode(reactor, "manual")
+
+  if reactor.workAllowed == allowed then
+    return
+  end
+
+  if reactor:setWorkAllowed(allowed) then
+    self.app.logger:info(reactor:displayName()..": Switched "..(allowed and "on" or "off").." by hand")
+  else
+    self.app.logger:warning(reactor:displayName()..": Controller not reachable")
+  end
+
+  self.app:settingsChanged()
+end
+
+---Open the dialog to type an exact threshold
 ---@param reactor Reactor
 ---@param field "low"|"high"
 function View:openThreshold(reactor, field)
@@ -215,6 +344,7 @@ function View:openThreshold(reactor, field)
   }))
 end
 
+---Open the rename dialog
 ---@param reactor Reactor
 function View:openRename(reactor)
   self.app:openDialog(dialogs.input({
@@ -232,6 +362,7 @@ function View:openRename(reactor)
   }))
 end
 
+---Open the recipe picker
 ---@param reactor Reactor
 function View:openRecipe(reactor)
   self.app:openDialog(dialogs.recipe({
@@ -246,6 +377,7 @@ function View:openRecipe(reactor)
   }))
 end
 
+---Handle a key press
 ---@param char integer
 ---@param code integer
 function View:key(char, code)
@@ -284,9 +416,12 @@ function View:key(char, code)
     self:openRename(reactor)
   elseif character == "m" then
     self:setMode(reactor, reactor.settings.mode == "auto" and "manual" or "auto")
+  elseif character == "o" then
+    self:setWorkAllowed(reactor, not reactor.workAllowed)
   end
 end
 
+---Handle the mouse wheel
 ---@param x integer
 ---@param y integer
 ---@param direction integer
@@ -298,8 +433,12 @@ function View:scroll(x, y, direction)
   end
 end
 
+---Draw the whole dashboard
 ---@param canvas Canvas
 function View:render(canvas)
+  self.sorted = nil
+  self.sorted = self:reactors()
+
   canvas:fill(1, 1, canvas.width, canvas.height, "background")
 
   self:renderHeader(canvas)
@@ -307,6 +446,8 @@ function View:render(canvas)
   self:renderDetail(canvas)
   self:renderEvents(canvas)
   self:renderFooter(canvas)
+
+  self.sorted = nil
 end
 
 ---@param canvas Canvas
@@ -345,7 +486,15 @@ end
 ---@param canvas Canvas
 ---@private
 function View:renderReactors(canvas)
-  local reactors = self.app.controller.reactors
+  local reactors = self:reactors()
+  local index = self:selection()
+
+  if index and index <= self.reactorsOffset then
+    self.reactorsOffset = index - 1
+  elseif index and index > self.reactorsOffset + layout.reactorsRows then
+    self.reactorsOffset = index - layout.reactorsRows
+  end
+
   local note = #reactors.." connected"
 
   if #reactors > layout.reactorsRows then
@@ -357,22 +506,30 @@ function View:renderReactors(canvas)
   local x = 4
 
   for _, column in ipairs(columns) do
-    canvas:text(x, layout.reactorsHeader, format.fit(column.title, column.width, column.align), "muted", "background")
+    if column.sort then
+      local id = column.id
+      local sorted = id == self.sortColumn
+      local arrow = self.sortDescending and "▼" or "▲"
+      local title = column.title
+
+      if sorted and unicode.len(title) + 2 <= column.width then
+        title = title.." "..arrow
+      elseif sorted then
+        canvas:text(x + column.width, layout.reactorsHeader, arrow, "accent", "background")
+      end
+
+      canvas:text(x, layout.reactorsHeader, format.fit(title, column.width, column.headerAlign or column.align),
+        sorted and "accent" or "muted", "background")
+      canvas:region(x, layout.reactorsHeader, column.width, 1, function() self:sortBy(id) end)
+    end
+
     x = x + column.width + columnGap
   end
-
-  local index = self:selection()
 
   if index == nil then
     canvas:text(4, layout.reactorsTop + 1,
       "No fusion controllers found. Connect controllers to the computer with adapters or MFUs.", "muted", "background")
     return
-  end
-
-  if index <= self.reactorsOffset then
-    self.reactorsOffset = index - 1
-  elseif index > self.reactorsOffset + layout.reactorsRows then
-    self.reactorsOffset = index - layout.reactorsRows
   end
 
   for row = 1, layout.reactorsRows do
@@ -398,7 +555,7 @@ function View:renderReactorRow(canvas, y, reactor, row)
   local settings = reactor.settings
   local recipe = reactor.recipe
 
-  canvas:fill(1, y, canvas.width, 1, background)
+  canvas:pill(1, y, canvas.width, background, "background")
 
   if selected then
     canvas:text(2, y, "▶", "accent", background)
@@ -413,7 +570,7 @@ function View:renderReactorRow(canvas, y, reactor, row)
   local cells = {
     name = {reactor:displayName(), "text"},
     kind = {reactor.kind, "muted"},
-    output = {recipe and (reactor.outputLabel or recipe.output.label) or "No recipe", recipe and "text" or "muted"},
+    output = {recipe and (reactor.outputLabel or recipe.output.label) or "No recipe", recipe and "info" or "muted"},
     stock = {format.amount(reactor.stock), "text"},
     low = {format.amount(settings.low), "text"},
     high = {format.amount(settings.high), "text"},
@@ -422,9 +579,13 @@ function View:renderReactorRow(canvas, y, reactor, row)
   }
 
   local x = 4
+  local powerX
 
   for _, column in ipairs(columns) do
-    if column.id == "level" then
+    if column.id == "power" then
+      powerX = x
+      drawPowerButton(canvas, x, y, reactor.workAllowed, background)
+    elseif column.id == "level" then
       if reactor.stock then
         drawStockLevel(canvas, x, y, column.width, reactor.stock, settings.low, settings.high, state.tone)
       end
@@ -440,6 +601,10 @@ function View:renderReactorRow(canvas, y, reactor, row)
 
   canvas:region(1, y, canvas.width, 1, function()
     self.selected = address
+  end)
+  canvas:region(powerX, y, columnsById.power.width, 1, function()
+    self.selected = address
+    self:setWorkAllowed(reactor, not reactor.workAllowed)
   end)
 end
 
@@ -472,14 +637,15 @@ function View:renderRecipe(canvas, reactor, x, y)
 
   canvas:text(x, y, name, "text", "background")
   canvas:text(x + unicode.len(name) + 2, y, reactor.kind, "muted", "background")
-  canvas:text(x, y + 1, "● "..state.label, state.tone, "background")
-  canvas:text(x + 22, y + 1, "Work "..(reactor.workAllowed and "allowed" or "disabled"), "muted", "background")
-  canvas:text(x + 42, y + 1, "Machine "..(reactor.active and "active" or "idle"), "muted", "background")
+  canvas:text(x + 38, y, "● "..state.label, state.tone, "background")
+  canvas:text(x + 58, y, "Machine "..(reactor.active and "active" or "idle"), "muted", "background")
+
+  canvas:fill(x, y + 1, width, 3, "surfaceRaised")
 
   local recipe = reactor.recipe
 
   if recipe == nil then
-    canvas:text(x, y + 3, "No recipe selected. Press R to choose the recipe this reactor runs.", "muted", "background")
+    canvas:text(x + 2, y + 2, "No recipe selected. Press R to choose the recipe this reactor runs.", "muted", "surfaceRaised")
     return
   end
 
@@ -489,21 +655,34 @@ function View:renderRecipe(canvas, reactor, x, y)
     table.insert(inputLabels, input.label)
   end
 
-  canvas:text(x, y + 3, "RECIPE", "muted", "background")
-  canvas:text(x + 10, y + 3, format.fit(table.concat(inputLabels, " + ").."  →  "..recipe.output.label, width - 10),
-    "text", "background")
+  local inputText = table.concat(inputLabels, " + ").."  →  "
+  local textWidth = width - 12
+  local inputWidth = math.min(unicode.len(inputText), textWidth)
+
+  canvas:text(x + 2, y + 2, "RECIPE", "accent", "surfaceRaised")
+  canvas:text(x + 10, y + 2, format.fit(inputText, inputWidth), "text", "surfaceRaised")
+  canvas:text(x + 10 + inputWidth, y + 2, format.fit(recipe.output.label, textWidth - inputWidth), "info", "surfaceRaised")
+
+  local overclocked = reactor:overclockedRecipe()
+  local usage = format.amount(overclocked.eut).." EU/t"
+  local time = format.seconds(overclocked.duration)
 
   canvas:text(x, y + 4, "STARTUP", "muted", "background")
   canvas:text(x + 10, y + 4, format.amount(recipe.startupEu).." EU", "text", "background")
   canvas:text(x + 26, y + 4, "USAGE", "muted", "background")
-  canvas:text(x + 33, y + 4, format.amount(recipe.eut).." EU/t", "text", "background")
+  canvas:text(x + 33, y + 4, usage, "text", "background")
   canvas:text(x + 50, y + 4, "TIME", "muted", "background")
-  canvas:text(x + 56, y + 4, format.seconds(recipe.duration), "text", "background")
+  canvas:text(x + 56, y + 4, time, "text", "background")
+
+  if overclocked.overclocks > 0 then
+    canvas:text(x + 34 + unicode.len(usage), y + 4, "×"..overclocked.multiplier, "accent", "background")
+    canvas:text(x + 57 + unicode.len(time), y + 4, "÷"..overclocked.multiplier, "accent", "background")
+  end
 
   canvas:text(x, y + 6, format.fit("FLUID", 44)..format.fit("IN ME", 14, "right")..format.fit("REQUIRED", 14, "right"),
     "muted", "background")
 
-  canvas:text(x, y + 7, format.fit("▲ "..(reactor.outputLabel or recipe.output.label), 44), "text", "background")
+  canvas:text(x, y + 7, format.fit("▲ "..(reactor.outputLabel or recipe.output.label), 44), "info", "background")
   canvas:text(x + 44, y + 7, format.fit(format.amount(reactor.stock).." mB", 14, "right"), "text", "background")
   canvas:text(x + 58, y + 7, format.fit("output", 14, "right"), "muted", "background")
 
@@ -539,21 +718,27 @@ function View:renderControls(canvas, reactor, x, y)
 
   canvas:text(x, y + 3, "Step", "muted", "background")
 
-  local buttonX = valueX
+  local stepOptions = {}
 
   for index, step in ipairs(self.app.config.steps) do
-    buttonX = canvas:button(buttonX, y + 3, format.amount(step), function()
-      self.stepIndex = index
-    end, index == self.stepIndex and "active" or "normal") + 1
+    stepOptions[index] = {
+      label = (string.gsub(format.amount(step), "%.0+([kMGT]?)$", "%1")),
+      action = function() self.stepIndex = index end
+    }
   end
+
+  canvas:segmented(valueX, y + 3, stepOptions, self.stepIndex)
 
   local auto = settings.mode == "auto"
 
   canvas:text(x, y + 5, "MODE", "muted", "background")
-  buttonX = canvas:button(valueX, y + 5, "Auto", function() self:setMode(reactor, "auto") end, auto and "active" or "normal")
-  buttonX = canvas:button(buttonX + 1, y + 5, "Manual", function() self:setMode(reactor, "manual") end,
-    auto and "normal" or "active")
-  canvas:text(buttonX + 3, y + 5,
+
+  local modeEnd = canvas:segmented(valueX, y + 5, {
+    {label = "Auto", action = function() self:setMode(reactor, "auto") end},
+    {label = "Manual", action = function() self:setMode(reactor, "manual") end}
+  }, auto and 1 or 2)
+
+  canvas:text(modeEnd + 2, y + 5,
     auto and "Program switches this reactor" or "Program never switches this reactor", "muted", "background")
 
   canvas:text(x, y + 7, "ENERGY", "muted", "background")
@@ -564,8 +749,8 @@ function View:renderControls(canvas, reactor, x, y)
   canvas:text(valueX + 32, y + 7, format.amount(reactor.storedEu).." / "..format.amount(reactor.capacity).." EU", "text",
     "background")
 
-  buttonX = canvas:button(valueX, y + 9, "Recipe  R", function() self:openRecipe(reactor) end)
-  canvas:button(buttonX + 1, y + 9, "Rename  N", function() self:openRename(reactor) end)
+  local actionX = canvas:keyButton(valueX, y + 9, "R", "Recipe", function() self:openRecipe(reactor) end) + 1
+  canvas:keyButton(actionX, y + 9, "N", "Rename", function() self:openRename(reactor) end)
 end
 
 ---@param canvas Canvas
@@ -577,25 +762,29 @@ end
 ---@private
 function View:renderThreshold(canvas, reactor, field, label, x, y)
   local active = self.field == field
-  local buttonX = x + 17
+  local stepperX = x + 17
+  local color = active and "selection" or "surfaceRaised"
+  local signTone = active and "accent" or "muted"
 
+  canvas:fill(x - 2, y, 1, 1, field == "low" and "markerLow" or "markerHigh")
   canvas:text(x, y, label, active and "accent" or "muted", "background")
 
-  buttonX = canvas:button(buttonX, y, "-", function()
+  canvas:pill(stepperX, y, 18, color, "background")
+  canvas:text(stepperX + 2, y, "-", signTone, color)
+  canvas:text(stepperX + 4, y, format.fit(format.amount(reactor.settings[field]).." mB", 10, "center"), "text", color)
+  canvas:text(stepperX + 15, y, "+", signTone, color)
+
+  canvas:region(stepperX, y, 4, 1, function()
     self.field = field
     self:adjust(reactor, -1)
-  end) + 1
-
-  canvas:text(buttonX, y, format.fit(format.amount(reactor.settings[field]).." mB", 12, "center"), "text",
-    active and "selection" or "surfaceRaised")
-  canvas:region(buttonX, y, 12, 1, function() self.field = field end)
-
-  buttonX = canvas:button(buttonX + 13, y, "+", function()
+  end)
+  canvas:region(stepperX + 4, y, 10, 1, function() self.field = field end)
+  canvas:region(stepperX + 14, y, 4, 1, function()
     self.field = field
     self:adjust(reactor, 1)
-  end) + 1
+  end)
 
-  canvas:button(buttonX + 1, y, "Set", function() self:openThreshold(reactor, field) end)
+  canvas:button(stepperX + 19, y, "Set", function() self:openThreshold(reactor, field) end, "raised")
 end
 
 ---@param canvas Canvas

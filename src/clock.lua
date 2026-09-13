@@ -1,6 +1,23 @@
+local computer = require("computer")
 local filesystem = require("filesystem")
 
 local stampPath = "/tmp/.fusion-maintainer-clock"
+local syncInterval = 60
+
+---Real-world time in seconds from the modification time of a temporary file
+---@return number|nil
+local function readRealTime()
+  local file = io.open(stampPath, "w")
+
+  if file == nil then
+    return nil
+  end
+
+  file:write("")
+  file:close()
+
+  return filesystem.lastModified(stampPath) / 1000
+end
 
 ---@class Clock
 local Clock = {}
@@ -10,22 +27,24 @@ Clock.__index = Clock
 ---@param timeZone? number
 ---@return Clock
 function Clock.new(timeZone)
-  return setmetatable({offset = (timeZone or 0) * 3600}, Clock)
+  return setmetatable({offset = (timeZone or 0) * 3600, syncedAt = nil, syncedTime = 0}, Clock)
 end
 
----Current real-world time in seconds
+---Current real-world time in seconds, synced once a minute and advanced with the uptime in between
 ---@return integer
 function Clock:now()
-  local file = io.open(stampPath, "w")
+  local uptime = computer.uptime()
 
-  if file == nil then
-    return 0
+  if self.syncedAt == nil or uptime - self.syncedAt >= syncInterval then
+    local time = readRealTime()
+
+    if time then
+      self.syncedAt = uptime
+      self.syncedTime = time
+    end
   end
 
-  file:write("")
-  file:close()
-
-  return math.floor(filesystem.lastModified(stampPath) / 1000) + self.offset
+  return math.floor(self.syncedTime + uptime - (self.syncedAt or uptime)) + self.offset
 end
 
 ---Format a time, defaults to now

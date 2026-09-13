@@ -7,14 +7,23 @@ local previousPath = package.path
 package.path = root.."/?.lua;"..previousPath
 
 for name in pairs(package.loaded) do
-  if name:find("^src%.") or name == "config" or name == "recipes" or name == "version" then
+  if name:find("^src%.") or name == "recipes" or name == "version" then
     package.loaded[name] = nil
   end
 end
 
 local App = require("src.app")
+local Config = require("src.config")
 
-local app = App.new(root, require("config"), require("recipes"), require("version"))
+local loaded, config = pcall(Config.load, root)
+
+if not loaded then
+  package.path = previousPath
+  io.stderr:write(tostring(config).."\n")
+  return
+end
+
+local app = App.new(root, config, require("recipes"), require("version"))
 local ok, reason = xpcall(function() app:run() end, debug.traceback)
 
 app:shutdown()

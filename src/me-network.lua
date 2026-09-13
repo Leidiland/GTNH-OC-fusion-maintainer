@@ -1,6 +1,6 @@
 local component = require("component")
 
-local componentTypes = {"me_interface", "me_controller"}
+local componentTypes = {"me_interface", "me_controller", "fluid_interface"}
 
 ---@class FluidSnapshot
 local Snapshot = {}
@@ -30,32 +30,59 @@ end
 local MeNetwork = {}
 MeNetwork.__index = MeNetwork
 
+---@type table<string, string>
+MeNetwork.messages = {
+  missing = "ME network unavailable: no ME Interface or ME Controller connected",
+  unsupported = "ME network unavailable: connected interface cannot read the network, use a block ME Interface or an ME Controller",
+  failed = "ME network unavailable: reading the network failed"
+}
+
 ---Create a reader for fluids stored in an ME network
 ---@param address? string
 ---@return MeNetwork
 function MeNetwork.new(address)
-  return setmetatable({address = address, proxy = nil, online = false}, MeNetwork)
+  return setmetatable({address = address, proxy = nil, online = false, status = "missing"}, MeNetwork)
 end
 
+---Addresses of a component type, limited to the configured address when one is set
+---@param componentType string
+---@return string[]
+---@private
+function MeNetwork:addresses(componentType)
+  if self.address then
+    local address = component.get(self.address, componentType)
+    return address and {address} or {}
+  end
+
+  local addresses = {}
+
+  for address in component.list(componentType, true) do
+    table.insert(addresses, address)
+  end
+
+  return addresses
+end
+
+---Connect to the first component that can read fluids from the network
 ---@return boolean
 ---@private
 function MeNetwork:connect()
+  self.proxy = nil
+  self.status = "missing"
+
   for _, componentType in ipairs(componentTypes) do
-    local address
+    for _, address in ipairs(self:addresses(componentType)) do
+      local proxy = component.proxy(address)
 
-    if self.address then
-      address = component.get(self.address, componentType)
-    else
-      address = component.list(componentType, true)()
-    end
+      if proxy and proxy.getFluidsInNetwork then
+        self.proxy = proxy
+        return true
+      end
 
-    if address then
-      self.proxy = component.proxy(address)
-      return true
+      self.status = "unsupported"
     end
   end
 
-  self.proxy = nil
   return false
 end
 
@@ -72,6 +99,7 @@ function MeNetwork:read()
   if not ok or type(stacks) ~= "table" then
     self.proxy = nil
     self.online = false
+    self.status = "failed"
     return nil
   end
 
@@ -92,6 +120,7 @@ function MeNetwork:read()
   end
 
   self.online = true
+  self.status = "online"
   return snapshot
 end
 
