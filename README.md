@@ -86,13 +86,12 @@ To start it on boot, add the same line to `/home/.shrc`.
 
 - Connect every fusion controller to the computer with an Adapter placed against the controller,
   or with an MFU bound to the controller inside an Adapter.
-- Connect a block ME Interface or an ME Controller of the network that stores
-  the reactor products and inputs with an Adapter. Cable-mounted ME Interfaces, ME Fluid Interfaces
-  and ME Dual Interfaces cannot read the network.
+- Connect a block ME Dual Interface of the network that stores
+  the reactor products and inputs with an Adapter. 
 - Deliver the reactor products into that ME network, for example with an Output Hatch (ME).
 - Supply the reactor inputs from outside the program. Inputs are checked, never requested.
 
-Controllers are detected automatically when the program starts and whenever components are added or removed.
+Connections are detected automatically when the program starts and whenever components are added or removed.
 
 <a id="usage"></a>
 
