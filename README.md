@@ -32,6 +32,7 @@ reaches an upper threshold. Recipes, thresholds and control mode are set on scre
 - Sortable reactor table with stock level bars
 - Settings are saved and kept when updating
 - Event log on screen, in a file and optionally in Discord
+- Optional periodic status overview in Discord
 
 <a id="requirements"></a>
 
@@ -107,7 +108,7 @@ The screen is split into four areas:
 | Footer | Keyboard shortcuts |
 
 The stock level bar shows the stock as a percentage of the switch-off threshold, up to 100%, with a red marker
-at the switch-on threshold and a green marker at the switch-off threshold.
+at the switch-on threshold and a purple marker at the switch-off threshold. The bar ends at 125% of the switch-off threshold.
 
 Usage and time in the Selected area include the overclocks the reactor applies to its recipe. The overclock
 multiplier is shown next to both values, for example `30.7k EU/t ×2` and `1.60 s ÷2`.
@@ -131,7 +132,7 @@ Newly detected reactors start in Manual mode without a recipe. To put a reactor 
 | <kbd>R</kbd> | Choose recipe |
 | <kbd>N</kbd> | Rename reactor |
 | <kbd>M</kbd> | Toggle Auto and Manual |
-| <kbd>O</kbd> | Switch the reactor on or off, sets Manual mode |
+| <kbd>O</kbd> | Switch the reactor on or off, keeps the mode |
 | <kbd>PgUp</kbd> <kbd>PgDn</kbd> | Scroll events |
 | <kbd>Del</kbd> | Clear events |
 | <kbd>Q</kbd> | Quit |
@@ -149,7 +150,7 @@ In the recipe dialog, type to search by fluid name and select a recipe with <kbd
 | Idle | Stock is at or above the switch-on threshold |
 | Charging | Stored EU is below the recipe startup EU |
 | Missing inputs | An input in the ME network is below the required amount |
-| Capacity low | Recipe startup EU exceeds the reactor EU capacity |
+| Capacity low | Recipe startup EU exceeds the reactor EU capacity, which is read again every poll until it fits |
 | Manual | Not switched by the program |
 | No recipe | No recipe selected |
 | No ME data | The ME network could not be read |
@@ -166,7 +167,14 @@ A reactor in Auto mode is switched on when all of the following are true:
 - The recipe startup EU fits into the reactor EU capacity
 - Stored EU is at least the recipe startup EU
 
-A running reactor is switched off when its stock reaches the switch-off threshold or an input drops below the required amount.
+A running reactor is switched off when its stock reaches the switch-off threshold or an input drops below the amount of one recipe run.
+A reactor switched off because of a missing input is switched on again once every input is back at the recipe amount multiplied by `inputBatches`,
+until its stock reaches the switch-off threshold.
+
+In the Selected area an input is red when it is below one recipe run and yellow when it is below the amount required to switch on.
+
+Switching a reactor in Auto mode on by hand fills it up to the switch-off threshold, as long as its inputs and stored EU allow it.
+Switching it off by hand keeps it off until its stock drops below the switch-on threshold.
 
 Reactors in Manual mode and reactors without a recipe are never switched.
 When the ME network cannot be read, no reactor is switched.
@@ -194,13 +202,14 @@ created on first start.
 | `reactors.addresses` | `{}` | Controller addresses used in addition to detected ones |
 | `defaults.lowThreshold` | `100000` | Switch-on threshold in mB for new reactors |
 | `defaults.highThreshold` | `1000000` | Switch-off threshold in mB for new reactors |
-| `defaults.inputBatches` | `16` | Recipe runs of each input required before switching on |
+| `defaults.inputBatches` | `100` | Recipe runs of each input required before switching on |
 | `steps` | `1k` to `10M` | Step sizes for threshold adjustment |
 | `log.file` | `fusion-maintainer.log` | Log file in the program folder |
 | `log.maxFileSize` | `262144` | Bytes before the log file is rotated to `.old` |
 | `log.timeZone` | `0` | Hours offset from UTC for timestamps |
 | `log.discordWebhookUrl` | `""` | Discord webhook for notifications |
 | `log.discordLevel` | `warning` | Minimum level sent to Discord |
+| `log.discordSummaryInterval` | `0` | Minutes between status overviews sent to Discord, aligned to the clock, `0` disables |
 | `customRecipes` | `{}` | Recipes missing from the built-in table |
 
 Custom recipes use the same format as `recipes.lua` and replace built-in recipes with the same output and inputs:

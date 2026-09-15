@@ -12,6 +12,7 @@ local Overclock = require("src.overclock")
 ---@field amount integer
 ---@field required integer
 ---@field missing boolean
+---@field exhausted boolean
 
 ---@class Reactor
 local Reactor = {}
@@ -82,16 +83,28 @@ function Reactor.new(address, proxy, machine, settings, logger)
     outputLabel = nil,
     inputs = {},
     storedEu = 0,
-    capacity = 0,
+    capacity = nil,
     workAllowed = false,
     active = false,
-    inactiveSince = nil
+    inactiveSince = nil,
+    refill = false
   }, Reactor)
 end
 
 ---@return string
 function Reactor:displayName()
   return self.settings.name or (self.kind.." "..string.sub(self.address, 1, 4))
+end
+
+---@return ReactorState
+function Reactor:stateInfo()
+  return Reactor.states[self.state] or Reactor.states.noRecipe
+end
+
+---Output label from the ME network, the recipe label when it is not stored, nil without a recipe
+---@return string|nil
+function Reactor:outputName()
+  return self.recipe and (self.outputLabel or self.recipe.output.label) or nil
 end
 
 ---Recipe EU/t and duration after overclocking in this reactor, base values when the tier is unknown
@@ -122,11 +135,19 @@ function Reactor:setRecipe(recipe)
   self.stock = nil
   self.outputLabel = nil
   self.inputs = {}
+  self.refill = false
 end
 
 ---@param mode "auto"|"manual"
 function Reactor:setMode(mode)
   self.settings.mode = mode
+  self.refill = false
+end
+
+---Fill an Auto mode reactor up to the switch-off threshold on the next update
+---@param refill boolean
+function Reactor:setRefill(refill)
+  self.refill = refill
 end
 
 ---Set the switch-on threshold, kept below the switch-off threshold
@@ -141,14 +162,23 @@ function Reactor:setHigh(value)
   self.settings.high = math.max(math.floor(value), self.settings.low + 1)
 end
 
+---Stock as a whole percentage of the switch-off threshold, capped at 100
+---@return integer|nil
+function Reactor:level()
+  if self.stock == nil then
+    return nil
+  end
+
+  return math.min(100, math.floor(self.stock / math.max(self.settings.high, 1) * 100 + 0.5))
+end
+
 ---Read machine state and apply control
 ---@param snapshot FluidSnapshot|nil
 ---@param inputBatches integer
 ---@param stallTimeout? integer
 function Reactor:update(snapshot, inputBatches, stallTimeout)
   if not self:readMachine() then
-    self.inactiveSince = nil
-    return self:setState("offline", "warning", "Controller not reachable")
+    return self:unreachable()
   end
 
   if self.workAllowed and not self.active then
@@ -174,17 +204,27 @@ function Reactor:update(snapshot, inputBatches, stallTimeout)
   end
 
   local settings = self.settings
-  local missing = self:missingInputs()
+  local missing = self:missingInputs("missing")
 
   if self.workAllowed then
     if self.stock >= settings.high then
-      self:setWorkAllowed(false)
+      if not self:setWorkAllowed(false) then
+        return self:unreachable()
+      end
+
+      self.refill = false
       return self:setState("idle", "info", "Stock "..format.amount(self.stock).." mB reached, switched off")
     end
 
-    if #missing > 0 then
-      self:setWorkAllowed(false)
-      return self:setState("noInputs", "warning", "Missing "..table.concat(missing, ", ")..", switched off")
+    local exhausted = self:missingInputs("exhausted")
+
+    if #exhausted > 0 then
+      if not self:setWorkAllowed(false) then
+        return self:unreachable()
+      end
+
+      self.refill = true
+      return self:setState("noInputs", "warning", "Missing "..table.concat(exhausted, ", ")..", switched off")
     end
 
     if self.active then
@@ -198,7 +238,11 @@ function Reactor:update(snapshot, inputBatches, stallTimeout)
     return self:setState("starting")
   end
 
-  if self.stock >= settings.low then
+  if self.stock >= settings.high then
+    self.refill = false
+  end
+
+  if self.stock >= settings.low and not self.refill then
     return self:setState("idle")
   end
 
@@ -215,10 +259,15 @@ function Reactor:update(snapshot, inputBatches, stallTimeout)
     return self:setState("charging")
   end
 
-  self:setWorkAllowed(true)
+  if not self:setWorkAllowed(true) then
+    return self:unreachable()
+  end
+
+  self.refill = false
   return self:setState("starting", "info", "Stock "..format.amount(self.stock).." mB, switched on")
 end
 
+---Read the machine, the EU capacity only when unknown or too low for the recipe
 ---@return boolean
 ---@private
 function Reactor:readMachine()
@@ -226,7 +275,10 @@ function Reactor:readMachine()
     self.workAllowed = self.proxy.isWorkAllowed()
     self.active = self.proxy.isMachineActive()
     self.storedEu = self.proxy.getEUStored()
-    self.capacity = self.proxy.getEUCapacity()
+
+    if self.capacity == nil or self.state == "lowCapacity" then
+      self.capacity = self.proxy.getEUCapacity()
+    end
   end)
 end
 
@@ -246,18 +298,21 @@ function Reactor:readFluids(snapshot, inputBatches)
       label = snapshot:label(fluid),
       amount = amount,
       required = required,
-      missing = amount < required
+      missing = amount < required,
+      exhausted = amount < fluid.amount
     })
   end
 end
 
+---Labels of inputs below the amount to switch on with "missing", or below one recipe run with "exhausted"
+---@param field "missing"|"exhausted"
 ---@return string[]
 ---@private
-function Reactor:missingInputs()
+function Reactor:missingInputs(field)
   local missing = {}
 
   for _, input in ipairs(self.inputs) do
-    if input.missing then
+    if input[field] then
       table.insert(missing, input.label)
     end
   end
@@ -275,6 +330,13 @@ function Reactor:setWorkAllowed(allowed)
   end
 
   return false
+end
+
+---@private
+function Reactor:unreachable()
+  self.inactiveSince = nil
+  self.capacity = nil
+  return self:setState("offline", "warning", "Controller not reachable")
 end
 
 ---@param key string

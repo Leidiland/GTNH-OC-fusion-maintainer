@@ -27,14 +27,20 @@ function DiscordLog.new(url, name)
   return setmetatable({url = url, name = name, queue = {}, request = nil, startedAt = 0}, DiscordLog)
 end
 
----Queue an entry, dropping the oldest one when the queue is full
+---Queue an entry
 ---@param entry LogEntry
 function DiscordLog:write(entry)
+  self:send("**"..self.name.."** `"..entry.level.."` "..entry.message)
+end
+
+---Queue a message as it is, dropping the oldest one when the queue is full
+---@param content string
+function DiscordLog:send(content)
   if #self.queue >= maxQueue then
     table.remove(self.queue, 1)
   end
 
-  table.insert(self.queue, "**"..self.name.."** `"..entry.level.."` "..entry.message)
+  table.insert(self.queue, content)
 end
 
 ---Finish the running request and start the next one without blocking, called from the main loop

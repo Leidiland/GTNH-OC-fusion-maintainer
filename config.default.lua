@@ -14,7 +14,7 @@ return {
   defaults = {
     lowThreshold = 100000, -- Switch-on amount in mB for newly detected reactors
     highThreshold = 1000000, -- Switch-off amount in mB for newly detected reactors
-    inputBatches = 16, -- Recipe runs of each input required in the ME network before switching on
+    inputBatches = 100, -- Recipe runs of each input required in the ME network before switching on
   },
 
   steps = {1000, 10000, 100000, 1000000, 10000000}, -- Threshold adjustment steps in mB
@@ -25,6 +25,7 @@ return {
     timeZone = 0, -- Hours offset from UTC for timestamps
     discordWebhookUrl = "", -- Discord webhook for notifications, empty to disable
     discordLevel = "warning", -- Minimum level sent to Discord
+    discordSummaryInterval = 0, -- Minutes between status overviews sent to Discord, 0 disables
   },
 
   customRecipes = { -- Recipes missing from the built-in table

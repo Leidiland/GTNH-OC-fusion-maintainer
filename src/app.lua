@@ -11,11 +11,13 @@ local MeNetwork = require("src.me-network")
 local MemoryLog = require("src.log.memory-log")
 local RecipeBook = require("src.recipe-book")
 local Store = require("src.store")
+local Summary = require("src.summary")
 local Canvas = require("src.ui.canvas")
 local View = require("src.ui.view")
 local theme = require("src.ui.theme")
 
 local watchedComponents = {gt_machine = true, me_interface = true, me_controller = true}
+local discordName = "Fusion Maintainer"
 
 ---@class App
 local App = {}
@@ -41,6 +43,7 @@ function App.new(root, config, recipes, version)
     nextPoll = 0,
     discoverAt = nil,
     discordLog = nil,
+    summary = nil,
     dialog = nil
   }, App)
 end
@@ -60,6 +63,14 @@ function App:init()
     error("config.lua: steps needs at least one value", 0)
   end
 
+  if Logger.levels[config.log.discordLevel] == nil then
+    error('config.lua: log.discordLevel must be "debug", "info", "warning" or "error"', 0)
+  end
+
+  if type(config.log.discordSummaryInterval) ~= "number" then
+    error("config.lua: log.discordSummaryInterval must be a number of minutes", 0)
+  end
+
   self.clock = Clock.new(config.log.timeZone)
   self.memoryLog = MemoryLog.new(64)
   self.logger = Logger.new(self.clock)
@@ -67,8 +78,12 @@ function App:init()
   self.logger:addHandler(FileLog.new(self.root.."/"..config.log.file, config.log.maxFileSize), "info")
 
   if config.log.discordWebhookUrl ~= "" then
-    self.discordLog = DiscordLog.new(config.log.discordWebhookUrl, "Fusion Maintainer")
+    self.discordLog = DiscordLog.new(config.log.discordWebhookUrl, discordName)
     self.logger:addHandler(self.discordLog, config.log.discordLevel)
+
+    if config.log.discordSummaryInterval > 0 then
+      self.summary = Summary.new(discordName, config.log.discordSummaryInterval)
+    end
   end
 
   self.store = Store.new(self.root.."/data/reactors.dat")
@@ -106,6 +121,10 @@ function App:run()
       self.controller:poll()
       self.nextPoll = now + self.config.pollInterval
       self.dirty = true
+
+      if self.summary then
+        self:sendSummary()
+      end
     end
 
     if self.dirty or math.floor(now) ~= renderedSecond then
@@ -179,6 +198,20 @@ function App:onScroll(x, y, direction)
   end
 
   self.dirty = true
+end
+
+---Queue the status overview when its interval has started
+---@private
+function App:sendSummary()
+  local time = self.clock:now()
+
+  if not self.summary:due(time) then
+    return
+  end
+
+  for _, message in ipairs(self.summary:messages(self.clock:format("%Y-%m-%d %H:%M", time), self.controller, self.network)) do
+    self.discordLog:send(message)
+  end
 end
 
 ---@private

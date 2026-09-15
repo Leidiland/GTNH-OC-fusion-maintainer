@@ -1,7 +1,6 @@
 local unicode = require("unicode")
 
 local format = require("src.format")
-local Reactor = require("src.reactor")
 local dialogs = require("src.ui.dialogs")
 local keys = require("src.ui.keys")
 
@@ -26,7 +25,7 @@ local columns = {
   {id = "name", title = "REACTOR", width = 20, sort = function(reactor) return string.lower(reactor:displayName()) end},
   {id = "kind", title = "TYPE", width = 14, align = "center", sort = function(reactor) return reactor.kind end},
   {id = "output", title = "OUTPUT", width = 26, align = "center", sort = function(reactor)
-    return reactor.recipe and string.lower(reactor.outputLabel or reactor.recipe.output.label) or ""
+    return string.lower(reactor:outputName() or "")
   end},
   {id = "level", title = "STOCK LEVEL", width = 24, align = "center", sort = function(reactor)
     return reactor.stock and reactor.stock / math.max(reactor.settings.high, 1) or -1
@@ -36,7 +35,7 @@ local columns = {
   {id = "high", title = "OFF AT", width = 8, align = "center", sort = function(reactor) return reactor.settings.high end},
   {id = "energy", title = "EU STORED", width = 9, align = "center", sort = function(reactor) return reactor.storedEu end},
   {id = "state", title = "STATE", width = 16, headerAlign = "center", sort = function(reactor)
-    return (Reactor.states[reactor.state] or Reactor.states.noRecipe).label
+    return reactor:stateInfo().label
   end}
 }
 
@@ -107,13 +106,14 @@ end
 ---@param stock integer
 ---@param low integer
 ---@param high integer
+---@param level integer
 ---@param tone string
-local function drawStockLevel(canvas, x, y, width, stock, low, high, tone)
-  local scale = math.max(high * 1.25, stock, 1)
+local function drawStockLevel(canvas, x, y, width, stock, low, high, level, tone)
+  local scale = math.max(high * 1.25, 1)
   local filled = math.min(width, math.floor(stock / scale * width + 0.5))
   local lowX = x + math.min(width - 1, math.floor(low / scale * width))
   local highX = x + math.min(width - 1, math.floor(high / scale * width))
-  local label = math.min(100, math.floor(stock / math.max(high, 1) * 100 + 0.5)).."%"
+  local label = level.."%"
   local labelX = x + math.floor((width - #label) / 2)
   local markers = {[lowX] = "markerLow", [highX] = "markerHigh"}
 
@@ -161,7 +161,7 @@ local function drawPowerButton(canvas, x, y, on, outside)
   local color = on and "track" or "border"
 
   canvas:pill(x, y, 4, color, outside)
-  canvas:text(x + 1, y, "⏻", on and "markerHigh" or "muted", color)
+  canvas:text(x + 1, y, "⏻", on and "good" or "muted", color)
 end
 
 ---@class View
@@ -193,15 +193,15 @@ function View:reactors()
 
   local column = columnsById[self.sortColumn]
   local reactors = {}
-  local keys = {}
+  local sortKeys = {}
 
   for index, reactor in ipairs(self.app.controller.reactors) do
     reactors[index] = reactor
-    keys[reactor] = column.sort(reactor)
+    sortKeys[reactor] = column.sort(reactor)
   end
 
   table.sort(reactors, function(a, b)
-    local keyA, keyB = keys[a], keys[b]
+    local keyA, keyB = sortKeys[a], sortKeys[b]
 
     if keyA ~= keyB then
       if self.sortDescending then
@@ -286,20 +286,35 @@ function View:setMode(reactor, mode)
   self.app:settingsChanged()
 end
 
----Switch a reactor on or off by hand, which sets it to manual mode
+---Switch a reactor on or off by hand, a reactor in Auto mode is filled up to its switch-off threshold
 ---@param reactor Reactor
 ---@param allowed boolean
 function View:setWorkAllowed(reactor, allowed)
-  self:setMode(reactor, "manual")
-
   if reactor.workAllowed == allowed then
     return
   end
 
-  if reactor:setWorkAllowed(allowed) then
-    self.app.logger:info(reactor:displayName()..": Switched "..(allowed and "on" or "off").." by hand")
+  local name = reactor:displayName()
+  local high = reactor.settings.high
+
+  if allowed and reactor.settings.mode == "auto" then
+    if reactor.recipe == nil then
+      self.app.logger:info(name..": No recipe, not switched on")
+      return
+    end
+
+    if reactor.stock and reactor.stock >= high then
+      self.app.logger:info(name..": Stock already at "..format.amount(high).." mB, not switched on")
+      return
+    end
+
+    reactor:setRefill(true)
+    self.app.logger:info(name..": Switched on by hand, filling to "..format.amount(high).." mB")
+  elseif reactor:setWorkAllowed(allowed) then
+    reactor:setRefill(false)
+    self.app.logger:info(name..": Switched "..(allowed and "on" or "off").." by hand")
   else
-    self.app.logger:warning(reactor:displayName()..": Controller not reachable")
+    self.app.logger:warning(name..": Controller not reachable")
   end
 
   self.app:settingsChanged()
@@ -551,7 +566,7 @@ end
 function View:renderReactorRow(canvas, y, reactor, row)
   local selected = reactor.address == self.selected
   local background = selected and "selection" or (row % 2 == 0 and "surface" or "background")
-  local state = Reactor.states[reactor.state] or Reactor.states.noRecipe
+  local state = reactor:stateInfo()
   local settings = reactor.settings
   local recipe = reactor.recipe
 
@@ -570,7 +585,7 @@ function View:renderReactorRow(canvas, y, reactor, row)
   local cells = {
     name = {reactor:displayName(), "text"},
     kind = {reactor.kind, "muted"},
-    output = {recipe and (reactor.outputLabel or recipe.output.label) or "No recipe", recipe and "info" or "muted"},
+    output = {reactor:outputName() or "No recipe", recipe and "info" or "muted"},
     stock = {format.amount(reactor.stock), "text"},
     low = {format.amount(settings.low), "text"},
     high = {format.amount(settings.high), "text"},
@@ -587,7 +602,7 @@ function View:renderReactorRow(canvas, y, reactor, row)
       drawPowerButton(canvas, x, y, reactor.workAllowed, background)
     elseif column.id == "level" then
       if reactor.stock then
-        drawStockLevel(canvas, x, y, column.width, reactor.stock, settings.low, settings.high, state.tone)
+        drawStockLevel(canvas, x, y, column.width, reactor.stock, settings.low, settings.high, reactor:level(), state.tone)
       end
     else
       local cell = cells[column.id]
@@ -631,7 +646,7 @@ end
 ---@param y integer
 ---@private
 function View:renderRecipe(canvas, reactor, x, y)
-  local state = Reactor.states[reactor.state] or Reactor.states.noRecipe
+  local state = reactor:stateInfo()
   local name = reactor:displayName()
   local width = layout.detailSplit - x - 2
 
@@ -682,7 +697,7 @@ function View:renderRecipe(canvas, reactor, x, y)
   canvas:text(x, y + 6, format.fit("FLUID", 44)..format.fit("IN ME", 14, "right")..format.fit("REQUIRED", 14, "right"),
     "muted", "background")
 
-  canvas:text(x, y + 7, format.fit("▲ "..(reactor.outputLabel or recipe.output.label), 44), "info", "background")
+  canvas:text(x, y + 7, format.fit("▲ "..reactor:outputName(), 44), "info", "background")
   canvas:text(x + 44, y + 7, format.fit(format.amount(reactor.stock).." mB", 14, "right"), "text", "background")
   canvas:text(x + 58, y + 7, format.fit("output", 14, "right"), "muted", "background")
 
@@ -692,7 +707,7 @@ function View:renderRecipe(canvas, reactor, x, y)
 
     if fluid then
       local rowY = y + 7 + index
-      local tone = input and (input.missing and "bad" or "good") or "muted"
+      local tone = input and (input.exhausted and "bad" or input.missing and "warn" or "good") or "muted"
 
       canvas:text(x, rowY, format.fit("▼ "..(input and input.label or fluid.label), 44), "text", "background")
       canvas:text(x + 44, rowY, format.fit((input and format.amount(input.amount) or "-").." mB", 14, "right"), tone,
@@ -745,7 +760,7 @@ function View:renderControls(canvas, reactor, x, y)
 
   local startup = reactor.recipe and reactor.recipe.startupEu or 0
 
-  drawEnergyLevel(canvas, valueX, y + 7, 30, reactor.storedEu, reactor.capacity, startup)
+  drawEnergyLevel(canvas, valueX, y + 7, 30, reactor.storedEu, reactor.capacity or 0, startup)
   canvas:text(valueX + 32, y + 7, format.amount(reactor.storedEu).." / "..format.amount(reactor.capacity).." EU", "text",
     "background")
 
